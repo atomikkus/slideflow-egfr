@@ -64,25 +64,25 @@ def main():
     ap.add_argument("--epochs",     type=int, default=20)
     ap.add_argument("--lr",         type=float, default=1e-4)
     ap.add_argument("--wd",         type=float, default=1e-5)
-    ap.add_argument("--pos-weight", type=float, default=3.85,
-                    help="BCE positive class weight (WT:Driver ratio ≈ 3.85)")
+    ap.add_argument("--pos-weight", type=float, default=5.07,
+                    help="BCE positive class weight (LUAD WT:Driver ≈ 5.07)")
     ap.add_argument("--outdir",     default=str(MIL_DIR))
-    ap.add_argument("--luad-only",  action="store_true",
-                    help="Restrict to LUAD slides (exclude LUSC)")
+    ap.add_argument("--include-lusc", action="store_true",
+                    help="Include LUSC slides (default: LUAD-only)")
     args = ap.parse_args()
 
     out_dir = Path(args.outdir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # ---- Load annotations ----
-    df = pd.read_csv(ANN_CSV)
+    df = pd.read_csv(ANN_CSV, dtype={"sample_type_code": str})
     df = df[
         (df["sample_type_code"] == "01") &
         (df[LABEL_COL].isin([0, 1]))
     ]
-    if args.luad_only:
+    if not args.include_lusc:
         df = df[df["cancer_type"] == "LUAD"]
-        print(f"LUAD-only mode: {len(df)} slides")
+        print(f"LUAD-only mode: {len(df)} slides (use --include-lusc to add LUSC)")
 
     print(f"\nTraining set: {len(df)} slides, "
           f"{df[LABEL_COL].sum()} driver, "
@@ -102,7 +102,7 @@ def main():
         filters={
             "sample_type_code": ["01"],
             LABEL_COL: [0, 1],
-            **({"cancer_type": ["LUAD"]} if args.luad_only else {}),
+            **({"cancer_type": ["LUAD"]} if not args.include_lusc else {}),
         },
     )
 

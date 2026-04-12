@@ -286,19 +286,26 @@ def main():
     print()
 
     tumor_slides = merged[merged["sample_type_code"] == "01"]
-    print(f"Primary Tumor slides:     {len(tumor_slides)}")
-    print(f"  EGFR Driver (label=1):  {(tumor_slides['egfr_driver'] == 1).sum()}")
-    print(f"  EGFR Other  (mutated):  {((tumor_slides['egfr_mutated'] == 1) & (tumor_slides['egfr_driver'] == 0)).sum()}")
-    print(f"  Wild-Type   (label=0):  {(tumor_slides['egfr_driver'] == 0).sum()}")
-    print(f"  Unknown:                {(tumor_slides['egfr_driver'] == -1).sum()}")
-    print()
+    luad_tumor   = tumor_slides[tumor_slides["cancer_type"] == "LUAD"]
+    lusc_tumor   = tumor_slides[tumor_slides["cancer_type"] == "LUSC"]
 
-    print("Slide type breakdown (Primary Tumor):")
-    print(tumor_slides.groupby(["slide_type", "egfr_driver"]).size().unstack(fill_value=0))
+    print(f"Primary Tumor slides (all):  {len(tumor_slides)}")
+    print(f"  LUAD: {len(luad_tumor)}  |  LUSC: {len(lusc_tumor)}")
     print()
-
-    print("Cancer type breakdown:")
-    print(merged.groupby(["cancer_type", "egfr_driver"]).size().unstack(fill_value=0))
+    print("LUAD training set (recommended):")
+    print(f"  EGFR Driver (label=1): {(luad_tumor['egfr_driver'] == 1).sum()} slides, "
+          f"{luad_tumor[luad_tumor['egfr_driver']==1]['patient'].nunique()} patients")
+    print(f"  WT/other   (label=0): {(luad_tumor['egfr_driver'] == 0).sum()} slides, "
+          f"{luad_tumor[luad_tumor['egfr_driver']==0]['patient'].nunique()} patients")
+    n_pos = (luad_tumor['egfr_driver'] == 1).sum()
+    n_neg = (luad_tumor['egfr_driver'] == 0).sum()
+    print(f"  Ratio (WT:Driver):    {n_neg/n_pos:.1f}:1  →  pos_weight = {n_neg/n_pos:.2f}")
+    print()
+    print("Slide type breakdown (LUAD Primary Tumor):")
+    print(luad_tumor.groupby(["slide_type", "egfr_driver"]).size().unstack(fill_value=0))
+    print()
+    print("Cancer type breakdown (all primary tumor):")
+    print(tumor_slides.groupby(["cancer_type", "egfr_driver"]).size().unstack(fill_value=0))
 
 
 if __name__ == "__main__":
