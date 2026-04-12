@@ -55,7 +55,7 @@ SLIDE_DIRS = [
 def load_training_slides(ann_csv: Path) -> pd.DataFrame:
     df = pd.read_csv(ann_csv)
     # Only primary tumor slides with known label
-    df = df[(df["sample_type_code"] == "01") & (df["egfr_driver"].isin([0, 1]))]
+    df = df[(df["sample_type_code"] == 1) & (df["egfr_driver"].isin([0, 1]))]
     print(f"Training slides: {len(df)} ({df['egfr_driver'].sum()} driver, "
           f"{(df['egfr_driver'] == 0).sum()} WT)")
     return df
@@ -77,28 +77,51 @@ def main():
                     help="GPU batch size for Hibou-L forward pass")
     ap.add_argument("--dry-run",    action="store_true",
                     help="Print plan without extracting")
+    ap.add_argument("--sample",     type=int, default=None,
+                    help="Randomly sample N slides per class (balanced subset)")
+    ap.add_argument("--seed",       type=int, default=42,
+                    help="Random seed for --sample (default: 42)")
     args = ap.parse_args()
 
     df = load_training_slides(ANN_CSV)
 
-    # Open (or create) the SlideFlow project
-    P = sf.Project(
-        root=str(PROJECT_DIR),
-        annotations=str(ANN_CSV),
-        slides=SLIDE_DIRS,
-    )
+    if args.sample is not None:
+        pos = df[df["egfr_driver"] == 1]
+        neg = df[df["egfr_driver"] == 0]
+        n = args.sample
+        if n > len(pos):
+            print(f"Warning: only {len(pos)} driver slides available, sampling all of them.")
+            n = len(pos)
+        pos_sample = pos.sample(n=n, random_state=args.seed)
+        neg_sample = neg.sample(n=n, random_state=args.seed)
+        df = pd.concat([pos_sample, neg_sample]).reset_index(drop=True)
+        print(f"Sampled subset: {len(pos_sample)} driver + {len(neg_sample)} WT = {len(df)} slides")
 
-    # Build dataset filtered to primary tumor slides with known label
+    # Load existing project or create new one
+    if (PROJECT_DIR / "settings.json").exists():
+        P = sf.load_project(str(PROJECT_DIR))
+    else:
+        P = sf.Project(
+            root=str(PROJECT_DIR),
+            annotations=str(ANN_CSV),
+            slides=SLIDE_DIRS,
+        )
+
+    # Build dataset filtered to the selected slides
+    dataset_filters = {
+        "sample_type_code": ["01"],
+        "egfr_driver": ["0", "1"],
+    }
+    if args.sample is not None:
+        dataset_filters["slide"] = df["slide"].tolist()
+
     dataset = P.dataset(
         tile_px=TILE_PX,
         tile_um=TILE_UM,
-        filters={
-            "sample_type_code": ["01"],
-            "egfr_driver": [0, 1],
-        },
+        filters=dataset_filters,
     )
 
-    print(f"\nDataset: {dataset.num_slides()} slides")
+    print(f"\nDataset: {len(dataset.slides())} slides")
 
     if args.dry_run:
         print("Dry-run mode: exiting without extraction.")
