@@ -1,0 +1,33 @@
+# Core
+slideflow>=3.0.2
+torch>=2.0.0
+torchvision>=0.15.0
+opencv-python-headless>=4.8.0
+
+# SlideFlow dependencies (partially missing from wheel)
+fpdf2>=2.7.0
+rasterio>=1.3.0
+scikit-image>=0.21.0
+shapely>=2.0.0
+zarr>=2.16.0
+tabulate>=0.9.0
+
+# Hibou-L / HuggingFace
+transformers>=4.38.0
+timm>=0.9.0
+huggingface-hub>=0.20.0
+
+# Data / ML
+pandas>=2.0.0
+numpy>=1.24.0
+scikit-learn>=1.3.0
+scipy>=1.11.0
+h5py>=3.9.0
+umap-learn>=0.5.4
+
+# Visualization
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# GCS access
+google-cloud-storage>=2.14.0

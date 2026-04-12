@@ -1,0 +1,24 @@
+# SlideFlow generated (large runtime outputs)
+features/
+mil/
+*.h5
+*.tfrecords
+*.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.egg-info/
+
+# Data (large files managed via GCS)
+*.svs
+*.ndpi
+*.mrxs
+*.scn
+
+# IDE
+.vscode/
+.idea/
+*.swp

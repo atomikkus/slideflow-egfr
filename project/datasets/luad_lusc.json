@@ -1,0 +1,28 @@
+{
+  "name": "TCGA-LUAD-EGFR",
+  "slides": [
+    "gs://wsi_bucket53/TCGA_LUAD_SVS",
+    "gs://wsi_bucket53/egfr_exon19_luad",
+    "gs://wsi_bucket53/EGFR_SVS"
+  ],
+  "annotations": "/home/satya/Github/slideflow-egfr/annotations.csv",
+  "tile_px": 256,
+  "tile_um": 128,
+  "label_column": "egfr_driver",
+  "patient_column": "patient",
+  "slide_column": "slide",
+  "filters": {
+    "sample_type_code": [
+      "01"
+    ],
+    "egfr_driver": [
+      0,
+      1
+    ]
+  },
+  "class_names": {
+    "0": "EGFR-Wildtype",
+    "1": "EGFR-Driver"
+  },
+  "class_balance_note": "Class imbalance ~1:4 (driver:WT). Use weighted loss (pos_weight\u22483.85) or over-sampling."
+}

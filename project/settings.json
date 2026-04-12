@@ -1,0 +1,13 @@
+{
+ "name": "TCGA-LUAD-EGFR",
+ "annotations": "/home/satya/Github/slideflow-egfr/annotations.csv",
+ "dataset_config": "./datasets.json",
+ "sources": [
+  "TCGA_LUAD_SVS",
+  "egfr_exon19_luad",
+  "EGFR_SVS"
+ ],
+ "models_dir": "./models",
+ "eval_dir": "./eval",
+ "slideflow_version": "3.0.2"
+}

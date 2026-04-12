@@ -1,0 +1,20 @@
+{
+ "TCGA_LUAD_SVS": {
+  "slides": "gs://wsi_bucket53/TCGA_LUAD_SVS",
+  "roi": "/home/satya/Github/slideflow-egfr/project/roi/TCGA_LUAD_SVS",
+  "tiles": null,
+  "tfrecords": "/home/satya/Github/slideflow-egfr/project/tfrecords"
+ },
+ "egfr_exon19_luad": {
+  "slides": "gs://wsi_bucket53/egfr_exon19_luad",
+  "roi": "/home/satya/Github/slideflow-egfr/project/roi/egfr_exon19_luad",
+  "tiles": null,
+  "tfrecords": "/home/satya/Github/slideflow-egfr/project/tfrecords"
+ },
+ "EGFR_SVS": {
+  "slides": "gs://wsi_bucket53/EGFR_SVS",
+  "roi": "/home/satya/Github/slideflow-egfr/project/roi/EGFR_SVS",
+  "tiles": null,
+  "tfrecords": "/home/satya/Github/slideflow-egfr/project/tfrecords"
+ }
+}
