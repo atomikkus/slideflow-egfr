@@ -1,7 +1,50 @@
-# EGFR Driver Mutation Classifier — SlideFlow + Hibou-L
+# EGFR Driver Mutation Classifier — SlideFlow + DINOv2
 
 Binary MIL classification of EGFR driver mutations from TCGA-LUAD whole-slide images.
 Label: `egfr_driver` (1 = FDA/NCCN driver mutation, 0 = EGFR wild-type or non-driver VUS).
+
+---
+
+## Environment setup
+
+### Python virtual environment
+
+```bash
+# Activate the project venv (Python 3.12 — Python 3.13 is incompatible with SlideFlow)
+source .venv/bin/activate
+```
+
+**Why Python 3.12:** SlideFlow uses `imghdr`, which was removed in Python 3.13.
+
+**Key packages installed:**
+- `slideflow==3.0.2` (installed `--no-deps` to avoid pyrfr/smac build failures)
+- `torch==2.6.0+cu124` (CUDA 12.4, for NVIDIA L4 GPU)
+- `torchvision==0.21.0+cu124`
+- `fastai` (required by SlideFlow MIL trainer — installed separately)
+- `timm`, `huggingface_hub` (for foundation model loading)
+
+**Venv patches applied (SlideFlow bugs):**
+- `.venv/lib/python3.12/site-packages/slideflow/io/torch/img_utils.py`:
+  `np.fromstring(image, dtype=np.uint8)` → `np.frombuffer(image, dtype=np.uint8).copy()`
+  (NumPy 2.0 removed binary mode of `fromstring`; `.copy()` makes array writable for PyTorch)
+- `.venv/lib/python3.12/site-packages/slideflow/mil/train/_fastai.py` line 140:
+  `pd.value_counts(targets[train_idx])` → `pd.Series(targets[train_idx]).value_counts()`
+  (pandas 2.x removed top-level `pd.value_counts`)
+
+### GCS slides — gcsfuse mount
+
+Slides are stored in `gs://wsi_bucket53/`. SlideFlow uses Python glob for slide discovery
+(doesn't support `gs://` URIs), so the bucket is mounted via gcsfuse:
+
+```bash
+# Mount (if not already mounted)
+gcsfuse --implicit-dirs wsi_bucket53 /home/satya/Github/slideflow-egfr/slides/wsi_bucket53
+
+# Verify
+ls slides/wsi_bucket53/TCGA_LUAD_SVS/ | head
+```
+
+`project/datasets.json` uses the local mount paths (already configured).
 
 ---
 
@@ -11,11 +54,11 @@ Label: `egfr_driver` (1 = FDA/NCCN driver mutation, 0 = EGFR wild-type or non-dr
 
 **GCS slide sources (3 buckets):**
 
-| Bucket folder | Contents | Slides |
+| Bucket folder | Local mount path | Slides |
 |---|---|---|
-| `gs://wsi_bucket53/TCGA_LUAD_SVS/` | Original TCGA-LUAD cohort | 1,000 |
-| `gs://wsi_bucket53/egfr_exon19_luad/` | Pre-curated EGFR exon-19 LUAD cases | 80 |
-| `gs://wsi_bucket53/EGFR_SVS/` | New TCGA slides downloaded from GDC this session (76 TCGA + 740 clinical non-TCGA) | 816 |
+| `gs://wsi_bucket53/TCGA_LUAD_SVS/` | `slides/wsi_bucket53/TCGA_LUAD_SVS/` | 1,000 |
+| `gs://wsi_bucket53/egfr_exon19_luad/` | `slides/wsi_bucket53/egfr_exon19_luad/` | 80 |
+| `gs://wsi_bucket53/EGFR_SVS/` | `slides/wsi_bucket53/EGFR_SVS/` | 816 |
 
 **`annotations.csv` — 1,060 deduplicated TCGA slides:**
 
@@ -85,94 +128,135 @@ discovery and download scripts.
 
 - **Location:** `./project/`
 - **Settings:** `./project/settings.json` — project name `TCGA-LUAD-EGFR`
-- **Datasets:** `./project/datasets.json` — 3 GCS slide sources registered
+- **Datasets:** `./project/datasets.json` — 3 gcsfuse-mounted slide sources
 - **Annotations:** `./annotations.csv` — loaded by all scripts automatically
 - **SlideFlow version:** 3.0.2
 
 ---
 
-## What still needs to be done
+## Feature extraction
 
-### Step 1 — Feature extraction (GPU required)
+**Extractor: DINOv2 ViT-L/14** (Meta AI, Apache-2.0)
+- Custom extractor: `dinov2_extractor.py`
+- 1024-dim CLS token embeddings, frozen (no fine-tuning)
+- Weights loaded via `torch.hub` from Facebook CDN (no token required)
+- Input: 256px tiles resized to 224px (ViT-L/14 requires multiples of 14)
+- Normalization: ImageNet mean/std [0.485, 0.456, 0.406] / [0.229, 0.224, 0.225]
+- Output: `.pt` (PyTorch tensor) + `.index.npz` per slide in `features/dinov2_vitl14/`
+
+**Note:** H-optimus-0 (Bioptimus, 1536-dim) was considered but abandoned due to
+slow HuggingFace download speed on this VM. Can retry with `hoptimus_extractor.py`
+if HF access improves (likely the biggest single AUC improvement available).
+
+**Status:** 198 pilot bags done. Full extraction (679 remaining slides) currently running.
 
 ```bash
-python extract_features.py
-# Options:
-#   --workers 4       tile-extraction threads per slide
-#   --batch-size 32   GPU batch size for Hibou-L forward pass
-#   --dry-run         print plan without running
+# Full extraction — incremental, skips already-extracted slides
+source .venv/bin/activate
+nohup python -u extract_features.py > logs/extraction_full.log 2>&1 &
+
+# Dry run (check plan without running)
+python extract_features.py --dry-run
+
+# Pilot run (balanced subset)
+python extract_features.py --sample 100
 ```
 
-- Extracts tiles at **256 px / 128 µm** (≈ 20× magnification equivalent)
-- Tissue segmentation via Otsu QC (auto-excludes background/whitespace)
-- Feature extractor: **Hibou-L** (ViT-L/14, 1024-dim, frozen — no fine-tuning)
-  - Weights download automatically from HuggingFace on first run
-  - `slideflow-gpl` or the `histai/hibou-l` HF repo must be accessible
-- Output: per-slide `.h5` bags in `./features/hibou_l/<slide_name>.h5`
-  - Each bag: `features` (N×1024 float32) + `coords` (N×2 int32)
-- **Estimated time:** ~2–4 min/slide on a single A100 → ~30h for 837 slides
-  - Run on a GPU node; feature extraction is the bottleneck
-- Incremental: already-extracted slides are skipped on re-run
+**Disk management:** `extract_features.py` processes slides in batches of 150
+(configurable via `--batch-slides N`). TFRecords (~384 MB/slide) are deleted after
+each batch once the `.pt` bag is confirmed saved. This keeps disk usage bounded
+to ~60 GB headroom rather than requiring ~245 GB for all slides at once.
 
-### Step 2 — MIL training
+---
+
+## MIL Training
 
 ```bash
-python train_mil.py
+source .venv/bin/activate
+nohup python -u train_mil.py > logs/train_mil.log 2>&1 &
+
 # Key options:
-#   --model     attention_mil | transmil | clam_sb | clam_mb  (default: attention_mil)
-#   --folds     5             stratified k-fold CV (default: 5)
-#   --epochs    20
-#   --lr        1e-4
-#   --pos-weight 5.07         BCE weight for class imbalance (LUAD 5.1:1 ratio)
-#   --include-lusc            add LUSC slides to training set
+#   --model        attention_mil | transmil | clam_sb | clam_mb  (default: attention_mil)
+#   --folds        3    stratified k-fold CV (default: 3)
+#   --epochs       20
+#   --lr           1e-4
+#   --dx-only           use DX (diagnostic) slides only — highest quality H&E
+#   --include-lusc      add LUSC slides to training set
 ```
 
-- **Aggregation level:** patient (all slides per patient = one bag)
-- **Splits:** patient-level stratified k-fold — no slide-level data leakage
-- **Loss:** weighted binary cross-entropy (`pos_weight=5.07`)
-- **Default model:** ABMIL (Ilse et al. 2018, attention-based)
-- Models saved to `./mil/<experiment>/`
+**Architecture:**
+- ABMIL (Ilse et al. 2018) — attention-based aggregation
+- `n_in=1024` (DINOv2 feature dim), `n_out=2` (binary classification)
+- Patient-level aggregation: all slides per patient merged into one bag
+- Weighted cross-entropy (`weighted_loss=True`) for 5:1 WT:Driver imbalance
+- fastai one-cycle LR schedule, AdamW `lr=1e-4`, `wd=1e-5`, `bag_size=512`
 
-**Recommended order to try:**
+**CV strategy — why 3-fold, not 5-fold:**
+With only 62 driver patients, 5-fold CV leaves ~12 driver patients per val fold —
+too few for stable AUC estimates (pilot showed 0.50–0.785 variance across folds).
+3-fold gives ~21 driver patients per val fold. Standard in TCGA-scale pathology ML papers.
+
+**Out-of-fold (OOF) aggregation:**
+Per-fold `predictions.parquet` files are pooled into `mil/oof_predictions.parquet`
+after training. A single AUC/AUPRC is computed over all patients (each appears in
+validation exactly once). This is the number to report — not the mean of per-fold AUCs.
+
+**Models saved to:** `./mil/fold{1..3}/`
+
+**Recommended model order:**
 1. `attention_mil` — ABMIL, standard baseline, fastest
 2. `clam_sb` — CLAM single-branch, good for interpretability
 3. `transmil` — transformer-based, better with large bag sizes
 
-**Training notes:**
-- With 62 driver patients and 5-fold CV, each fold trains on ~50 driver / ~284 WT patients
-- This is a marginal dataset size — expect AUC 0.70–0.82 range
-- If AUC < 0.70: check feature quality, try DX-only slides, consider augmentation
-- If overfitting: reduce epochs, add dropout, try bag-size capping (e.g. `--bag-size 512`)
+---
 
-### Step 3 — Evaluation
+## Evaluation
 
 ```bash
-python evaluate_mil.py --model-dir ./mil/00001-attention_mil
-# Options:
-#   --fold 0        evaluate specific fold (default: all folds)
-#   --heatmaps      generate attention heatmaps (slow, needs GPU)
+source .venv/bin/activate
+python evaluate_mil.py [--outdir ./mil] [--model-tag attention_mil-egfr_driver]
 ```
 
-Outputs per experiment directory:
-- `roc_curve.png` — per-fold ROC curves with AUC
-- `prc_curve.png` — precision-recall curves with AUPRC
-- `summary.json` — mean AUC, AUPRC, F1, sensitivity, specificity per fold
+Reads `mil/oof_predictions.parquet` (written by `train_mil.py`) and outputs:
+- `mil/roc_curve.png` — OOF aggregate ROC (black) + per-fold curves (colour)
+- `mil/prc_curve.png` — OOF aggregate PRC + random baseline
+- `mil/summary.json` — AUC, AUPRC, F1, sensitivity, specificity + per-fold breakdown
 
-### Step 4 — Optional improvements
+**Pilot results (198 bags, 137 patients — for reference only):**
 
-**If dataset is too small (AUC < 0.72):**
-- Add LUSC driver cases (`--include-lusc`) — adds 4 more driver patients
-- Use DX-only slides (`slide_type == DX`) — highest quality H&E
-- External validation cohort: NLST or CPTAC-LUAD if accessible
+| Fold | Val patients | Driver | AUC | AUPRC |
+|------|-------------|--------|-----|-------|
+| 1 | 30 | 10 | 0.500 | 0.331 |
+| 2 | 29 | 12 | 0.637 | 0.590 |
+| 3 | 34 | 11 | 0.569 | 0.403 |
+| 4 | 22 | 11 | 0.587 | 0.649 |
+| 5 | 22 | 11 | 0.785 | 0.816 |
+| **OOF** | **137** | **55** | **0.578** | **0.543** |
 
-**If class imbalance hurts recall:**
-- Adjust `--pos-weight` upward (e.g. 8.0) to improve sensitivity at cost of specificity
-- Undersample WT to 2:1 or 3:1 ratio — edit filter in `train_mil.py`
+Pilot AUC is noisy due to small val fold sizes — expected to improve significantly
+with full cohort features (~417 patient bags).
 
-**Interpretability:**
-- Run `evaluate_mil.py --heatmaps` to generate attention maps
-- High-attention tiles in driver cases should localise to tumour nuclei / gland architecture
-- Compare ABMIL vs CLAM attention distributions
+---
+
+## Roadmap
+
+### Immediate (in progress)
+1. **Full feature extraction** — `extract_features.py` running, ~879 slides total
+2. **Retrain on full cohort** — `train_mil.py` with 3-fold CV once extraction done
+3. **Evaluate** — `evaluate_mil.py` → OOF AUC/AUPRC, ROC + PRC plots
+
+### If AUC < 0.72
+- `--dx-only` — train on diagnostic slides only (356 slides, 58 driver) — removes
+  TS/BS noise, consistent staining protocol
+- `--include-lusc` — adds 4 more driver patients (marginal)
+- **H-optimus-0** (`hoptimus_extractor.py`) — pathology-native 1536-dim features
+  vs ImageNet-pretrained DINOv2 1024-dim; likely the biggest single gain
+
+### If AUC > 0.72
+- Attention heatmaps — high-attention tiles should localise to tumour nuclei /
+  gland architecture in driver cases
+- Try `transmil` or `clam_sb` — may improve over ABMIL with full bag sizes
+- External validation — NLST or CPTAC-LUAD if accessible
 
 ---
 

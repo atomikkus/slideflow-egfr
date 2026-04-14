@@ -1,0 +1,27 @@
+{
+  "architecture": "vit_giant_patch14_reg4_dinov2",
+  "num_classes": 0,
+  "num_features": 1536,
+  "global_pool": "token",
+  "pretrained_cfg": {
+    "custom_load": true,
+    "input_size": [
+      3,
+      224,
+      224
+    ],
+    "fixed_input_size": true,
+    "mean": [
+      0.707223,
+      0.578729,
+      0.703617
+    ],
+    "std": [
+      0.211883,
+      0.230117,
+      0.177517
+    ],
+    "num_classes": 0,
+    "license": "Apache 2.0"
+  }
+}
