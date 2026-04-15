@@ -22,9 +22,13 @@ Training strategy:
 Usage:
     python train_mil.py [--model attention_mil] [--folds 3] [--epochs 20]
                         [--lr 1e-4] [--wd 1e-5] [--outdir ./mil]
+                        [--run-name my_experiment]
 """
 
 import argparse
+import subprocess
+import sys
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -67,14 +71,23 @@ def main():
     ap.add_argument("--lr",         type=float, default=1e-4)
     ap.add_argument("--wd",         type=float, default=1e-5)
     ap.add_argument("--outdir",     default=str(MIL_DIR))
+    ap.add_argument("--run-name",   default=None,
+                    help="Optional run folder suffix; final path is "
+                         "<outdir>/<timestamp>_<model>_<run-name>")
     ap.add_argument("--include-lusc", action="store_true",
                     help="Include LUSC slides (default: LUAD-only)")
     ap.add_argument("--dx-only",    action="store_true",
                     help="Use DX (diagnostic) slides only — highest quality H&E")
     args = ap.parse_args()
 
-    out_dir = Path(args.outdir)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    base_out_dir = Path(args.outdir)
+    base_out_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_suffix = f"_{args.run_name}" if args.run_name else ""
+    run_dir = base_out_dir / f"{timestamp}_{args.model}{run_suffix}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    print(f"\nRun output directory: {run_dir}")
 
     # ---- Load annotations ----
     df = pd.read_csv(ANN_CSV, dtype={"sample_type_code": str})
@@ -154,7 +167,7 @@ def main():
         train_ds = dataset.filter(filters={PATIENT_COL: train_patients})
         val_ds   = dataset.filter(filters={PATIENT_COL: val_patients})
 
-        fold_dir = out_dir / f"fold{fold_i + 1}"
+        fold_dir = run_dir / f"fold{fold_i + 1}"
         fold_dir.mkdir(parents=True, exist_ok=True)
 
         learner = sf_mil.train_mil(
@@ -180,7 +193,7 @@ def main():
     # ---- Pool out-of-fold predictions ----
     if oof_preds:
         oof_df = pd.concat(oof_preds, ignore_index=True)
-        oof_path = out_dir / "oof_predictions.parquet"
+        oof_path = run_dir / "oof_predictions.parquet"
         oof_df.to_parquet(oof_path, index=False)
 
         from sklearn.metrics import roc_auc_score, average_precision_score
@@ -192,7 +205,22 @@ def main():
         print(f"  Aggregated OOF AUC  : {oof_auc:.3f}")
         print(f"  Aggregated OOF AUPRC: {oof_ap:.3f}")
         print(f"  OOF predictions → {oof_path}")
-        print(f"  Saved models     → {out_dir}")
+        print(f"  Saved models     → {run_dir}")
+
+        # Auto-generate ROC/PRC plots + summary.json for this run directory.
+        eval_script = REPO_DIR / "evaluate_mil.py"
+        eval_cmd = [
+            sys.executable, str(eval_script),
+            "--outdir", str(run_dir),
+            "--model-tag", f"{args.model}-{LABEL_COL}",
+        ]
+        print("\nGenerating ROC/PRC plots and summary ...")
+        try:
+            subprocess.run(eval_cmd, check=True)
+        except subprocess.CalledProcessError as exc:
+            print(f"WARNING: evaluation step failed (exit={exc.returncode}).")
+            print("You can rerun manually with:")
+            print(f"  {' '.join(eval_cmd)}")
 
 
 if __name__ == "__main__":

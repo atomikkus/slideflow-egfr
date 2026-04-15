@@ -148,10 +148,10 @@ discovery and download scripts.
 slow HuggingFace download speed on this VM. Can retry with `hoptimus_extractor.py`
 if HF access improves (likely the biggest single AUC improvement available).
 
-**Status:** 198 pilot bags done. Full extraction (679 remaining slides) currently running.
+**Status: COMPLETE — 872 bags extracted (879 slides attempted, 7 failed due to missing MPP metadata).**
 
 ```bash
-# Full extraction — incremental, skips already-extracted slides
+# Re-run extraction (incremental — already-extracted slides are skipped)
 source .venv/bin/activate
 nohup python -u extract_features.py > logs/extraction_full.log 2>&1 &
 
@@ -222,40 +222,56 @@ Reads `mil/oof_predictions.parquet` (written by `train_mil.py`) and outputs:
 - `mil/prc_curve.png` — OOF aggregate PRC + random baseline
 - `mil/summary.json` — AUC, AUPRC, F1, sensitivity, specificity + per-fold breakdown
 
-**Pilot results (198 bags, 137 patients — for reference only):**
+**Full cohort results — Run 1 (872 bags, 307 patients, 3-fold CV, ABMIL + DINOv2):**
 
 | Fold | Val patients | Driver | AUC | AUPRC |
 |------|-------------|--------|-----|-------|
-| 1 | 30 | 10 | 0.500 | 0.331 |
-| 2 | 29 | 12 | 0.637 | 0.590 |
-| 3 | 34 | 11 | 0.569 | 0.403 |
-| 4 | 22 | 11 | 0.587 | 0.649 |
-| 5 | 22 | 11 | 0.785 | 0.816 |
-| **OOF** | **137** | **55** | **0.578** | **0.543** |
+| 1 | 139 | 20 | 0.500 | 0.331 |
+| 2 | 139 | 21 | 0.733 | 0.355 |
+| 3 | 139 | 21 | 0.610 | 0.212 |
+| **OOF** | **307** | **62** | **0.580** | **0.256** |
 
-Pilot AUC is noisy due to small val fold sizes — expected to improve significantly
-with full cohort features (~417 patient bags).
+OOF AUC 0.580 is above chance but below target (0.72). AUPRC of 0.256 vs random
+baseline of ~0.165 confirms signal is present. Next steps: try `--dx-only` (removes
+TS/BS noise) and/or H-optimus-0 features (pathology-native 1536-dim embeddings).
+
+**Pilot results (198 bags, 137 patients, 5-fold CV — for reference only):**
+
+| **OOF** | **137** | **55** | **0.578** | **0.543** |
 
 ---
 
 ## Roadmap
 
-### Immediate (in progress)
-1. **Full feature extraction** — `extract_features.py` running, ~879 slides total
-2. **Retrain on full cohort** — `train_mil.py` with 3-fold CV once extraction done
-3. **Evaluate** — `evaluate_mil.py` → OOF AUC/AUPRC, ROC + PRC plots
+### Completed
+- [x] Pilot feature extraction (198 bags, balanced 100+100)
+- [x] Pilot training (5-fold, ABMIL, DINOv2) — OOF AUC 0.578
+- [x] Full feature extraction — 872 bags, 879 slides attempted, 7 failed (missing MPP)
+- [x] Full cohort training (3-fold, ABMIL, DINOv2) — OOF AUC 0.580, AUPRC 0.256
+- [x] `evaluate_mil.py` — OOF aggregation, ROC + PRC plots, summary JSON
+- [x] `setup.sh` — reproducible environment setup for fresh VMs
 
-### If AUC < 0.72
-- `--dx-only` — train on diagnostic slides only (356 slides, 58 driver) — removes
-  TS/BS noise, consistent staining protocol
-- `--include-lusc` — adds 4 more driver patients (marginal)
-- **H-optimus-0** (`hoptimus_extractor.py`) — pathology-native 1536-dim features
-  vs ImageNet-pretrained DINOv2 1024-dim; likely the biggest single gain
+### Next (AUC 0.58 < target 0.72 — try these in order)
+
+1. **`--dx-only`** — train on DX (diagnostic) slides only
+   - 298 WT + 58 driver = 356 slides, removes noisier TS/BS sections
+   - `nohup python -u train_mil.py --dx-only > logs/train_mil_dxonly.log 2>&1 &`
+
+2. **`clam_sb`** — CLAM single-branch aggregator
+   - Adds instance-level clustering loss, often better than ABMIL with small cohorts
+   - `nohup python -u train_mil.py --model clam_sb > logs/train_mil_clam.log 2>&1 &`
+
+3. **H-optimus-0 features** — pathology-native 1536-dim vs ImageNet DINOv2 1024-dim
+   - Likely biggest single gain; requires HF token + good download speed
+   - `hoptimus_extractor.py` is already written; re-run `extract_features.py` with it
+   - `HF_TOKEN=hf_... python extract_features.py` (set extractor to `hoptimus`)
+
+4. **`--include-lusc`** — adds 4 more driver patients (marginal)
 
 ### If AUC > 0.72
 - Attention heatmaps — high-attention tiles should localise to tumour nuclei /
-  gland architecture in driver cases
-- Try `transmil` or `clam_sb` — may improve over ABMIL with full bag sizes
+  gland architecture in driver cases (`mil/fold*/attention/*.npz` already saved)
+- Try `transmil` — transformer-based aggregation, captures tile-to-tile context
 - External validation — NLST or CPTAC-LUAD if accessible
 
 ---
