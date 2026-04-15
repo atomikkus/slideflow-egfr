@@ -12,7 +12,7 @@ Each .pt contains:
 
 Usage:
     python extract_features.py [--workers 4] [--batch-size 32] [--dry-run]
-                               [--batch-slides 150]
+                               [--batch-slides 150] [--normalizer macenko]
 
 Notes:
     - Slides are read from gcsfuse-mounted GCS bucket (slides/wsi_bucket53/)
@@ -103,7 +103,12 @@ def main():
     ap.add_argument("--batch-slides",  type=int, default=150,
                     help="Process this many slides per batch, deleting TFRecords "
                          "after each batch to save disk space (default: 150)")
+    ap.add_argument("--normalizer",    type=str, default="macenko",
+                    choices=["macenko", "reinhard", "none"],
+                    help="Stain normalizer for tile extraction "
+                         "(default: macenko, use 'none' to disable)")
     args = ap.parse_args()
+    normalizer = None if args.normalizer == "none" else args.normalizer
 
     register_dinov2_vitl()
     df = load_training_slides(ANN_CSV)
@@ -151,6 +156,7 @@ def main():
 
     all_slides = dataset.slides()
     print(f"\nDataset: {len(all_slides)} slides total")
+    print(f"Tile stain normalizer: {normalizer or 'disabled'}")
 
     # ---- Upfront cleanup: delete TFRecords for already-extracted slides ----
     already_done = [s for s in all_slides if already_extracted(s, FEATURES_DIR, EXTRACTOR)]
@@ -205,6 +211,7 @@ def main():
                 tile_um=TILE_UM,
                 filters=batch_filters,
                 qc=QC,
+                normalizer=normalizer,
                 num_threads=args.workers,
                 report=False,
             )

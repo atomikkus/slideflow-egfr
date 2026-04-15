@@ -141,6 +141,7 @@ discovery and download scripts.
 - 1024-dim CLS token embeddings, frozen (no fine-tuning)
 - Weights loaded via `torch.hub` from Facebook CDN (no token required)
 - Input: 256px tiles resized to 224px (ViT-L/14 requires multiples of 14)
+- Tile stain normalization: **Macenko** at extraction time (default in `extract_features.py`)
 - Normalization: ImageNet mean/std [0.485, 0.456, 0.406] / [0.229, 0.224, 0.225]
 - Output: `.pt` (PyTorch tensor) + `.index.npz` per slide in `features/dinov2_vitl14/`
 
@@ -153,13 +154,16 @@ if HF access improves (likely the biggest single AUC improvement available).
 ```bash
 # Re-run extraction (incremental — already-extracted slides are skipped)
 source .venv/bin/activate
-nohup python -u extract_features.py > logs/extraction_full.log 2>&1 &
+nohup python -u extract_features.py --normalizer macenko > logs/extraction_full.log 2>&1 &
 
 # Dry run (check plan without running)
-python extract_features.py --dry-run
+python extract_features.py --dry-run --normalizer macenko
 
 # Pilot run (balanced subset)
-python extract_features.py --sample 100
+python extract_features.py --sample 100 --normalizer macenko
+
+# Disable stain normalization (if needed for ablation)
+python extract_features.py --normalizer none
 ```
 
 **Disk management:** `extract_features.py` processes slides in batches of 150
