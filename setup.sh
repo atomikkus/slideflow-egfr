@@ -119,9 +119,66 @@ pip install "slideflow==3.0.2" --no-deps -q
 echo "  Installing remaining dependencies..."
 pip install -r "$REPO_DIR/requirements.txt" -q
 
+# Optional GPL models (CLAM) without triggering pyrfr build failures.
+# slideflow-gpl is required for --model clam_sb / clam_mb.
+echo "  Installing SlideFlow GPL plugin for CLAM (--no-deps)..."
+pip install "slideflow-gpl==0.0.2" --no-deps -q
+
+echo "  Installing CLAM plugin runtime dependencies (excluding pyrfr)..."
+pip install \
+    "scikit-misc==0.5.2" \
+    "saliency==0.2.1" \
+    "gast==0.7.0" \
+    "glfw==2.10.0" \
+    "imgui==2.0.0" \
+    "ConfigSpace==1.2.2" \
+    "emcee==3.1.6" \
+    "dask==2026.3.0" \
+    "distributed==2026.3.0" \
+    "pynisher==0.6.4" \
+    "psutil==7.2.2" \
+    "partd==1.4.2" \
+    "toolz==1.1.0" \
+    "locket==1.0.0" \
+    "msgpack==1.1.2" \
+    "sortedcontainers==2.4.0" \
+    "tblib==3.2.2" \
+    "tornado==6.5.5" \
+    "zict==3.0.0" \
+    "more-itertools==11.0.2" \
+    -q
+
+# SlideFlow expects smac metadata to exist, but pyrfr fails to compile on this VM.
+# Install smac without deps and remove only the hard pyrfr metadata requirement.
+echo "  Installing SMAC metadata stub (without pyrfr build)..."
+pip install "smac==1.4.0" --no-deps -q
+VENV_DIR="$VENV_DIR" python - <<'PY'
+import os
+from pathlib import Path
+
+venv_dir = Path(os.environ["VENV_DIR"])
+meta = venv_dir / "lib" / "python3.12" / "site-packages" / "smac-1.4.0.dist-info" / "METADATA"
+
+if meta.exists():
+    text = meta.read_text()
+    patched = "\n".join(
+        line for line in text.splitlines() if line.strip() != "Requires-Dist: pyrfr>=0.8.3"
+    ) + "\n"
+    if patched != text:
+        meta.write_text(patched)
+        print("  ✓ Patched smac METADATA: removed pyrfr requirement")
+    else:
+        print("  ✓ smac METADATA already patched")
+else:
+    print("  ⚠ smac METADATA not found; CLAM may require manual patch")
+PY
+
 echo "  Verifying CUDA..."
 python -c "import torch; assert torch.cuda.is_available(), 'CUDA not available!'; \
            print(f'  CUDA OK — {torch.cuda.get_device_name(0)}, PyTorch {torch.__version__}')"
+
+echo "  Verifying CLAM model availability..."
+python -c "import slideflow.mil as sf_mil; sf_mil.mil_config(model='clam_sb', aggregation_level='patient', epochs=1, lr=1e-4, wd=1e-5, bag_size=8, weighted_loss=True); print('  CLAM-SB OK')"
 
 # -----------------------------------------------------------------------------
 # 5. Apply SlideFlow source patches
